@@ -1,0 +1,858 @@
+#!/bin/bash
+set -e
+set -o pipefail
+version=0.1
+############################################################
+#  Program: sv_pipeline
+#  Version: 0.1
+#  Author: Youhuang Bai
+###################################s#########################
+SV_DIR=`dirname $0`
+LC_ALL=C
+## global usage
+function usage() {
+    echo "
+Program: sv_pipeline
+Version: 0.1
+Author: Youhuang Bai (youhuang.bai.1@vumc.org)
+usage:   sv_pipeline <command> [options]
+command: mapping     align FASTQ files with BWA-MEM, and 
+                     add MC MQ Tags with samblaster and sort by name
+         refine      apply gatk recalibration to it 
+         call        SV call with lumpy in smoove
+         merge       merge SVs with smoove
+         genotype    genotype SVs with svtyper in smoove
+         combine     combine all samples into one file
+         annotate    annotate with genome annotation
+options: -h       show this message
+"
+}
+
+
+
+function mapping() {
+    function mapping_usage() {
+    echo "
+usage:   SV_pipeline mapping -o <output> -g <reference.fa> <input.1.fq> [input.2.fq]
+
+options:
+
+        -R STR   read group informatin for bwa mapping
+        -t INT   threads [8]
+        -o STR   prefix for output file
+        -p       fastq file is INTERLEAVED
+        -V STR   genome version for human hg19 or hg38 [hg19]
+        -g STR   reference genome file
+"
+    }
+    
+    # Check options passed in.
+    if test -z "$2"
+    then
+        mapping_usage
+    exit 1
+    fi
+    
+    
+    while getopts ":hg:t:R:o:pV:" OPTION
+    do
+        case "${OPTION}" in
+            h)
+                mapping_usage
+                exit 1
+                ;;
+            g)
+                GENOME="$OPTARG"
+                ;;
+            t)
+                THREADS="$OPTARG"
+                ;;
+            R)
+                READ_GROUP="$OPTARG"
+                ;;
+            o)
+                OUTPUT="$OPTARG"
+                ;;
+            p)
+                INTERLEAVED=1
+                ;;
+            V)
+                HG="$OPTARG"
+                ;;
+        esac
+    done
+    # set defaults
+
+    if [[ -z $THREADS ]]; then
+        THREADS="8"
+    fi
+    
+    if [[ -z $HG ]]; then
+        HG="hg19"
+    fi
+    
+    if [ $HG == "hg19" ]; then
+        if [[ -z $GENOME ]]; then
+            GENOME="/scratch/cqs/shengq2/references/gatk/b37/bwa_index_0.7.17/human_g1k_v37.fasta"
+        fi
+    elif [ $HG == "hg38" ]; then
+        if [[ -z $GENOME ]]; then
+            GENOME="/scratch/cqs/baiy7/Tim_proj/Family_WGS/genome/hg38/Homo_sapiens_assembly38.fasta"
+        fi
+    else
+        echo "Unknown genome version！"
+        exit 1
+    fi
+    
+    if [[ "$INTERLEAVED" -eq 1 ]]; then
+        FQ="${@:${OPTIND}:1}"
+        if [[ -z "$FQ" ]]; then
+            mapping_usage
+            echo -e "Error: Fastq file $FQ not found.\n"
+            exit 1
+        fi
+        if [[ -z "$OUTPUT" ]]; then
+            OUTPUT=`basename "$FQ"`
+        fi
+    else
+        FQ1="${@:${OPTIND}:1}"
+        FQ2="${@:$((${OPTIND}+1)):1}"
+
+
+        if [[ -z "$OUTPUT" ]]; then
+            OUTPUT=`basename "$FQ1"`
+        fi
+        if [[ -z "$FQ1" ]]; then
+            mapping_usage
+            echo -e "Error: Fastq file $FQ1 not found.\n"
+            exit 1
+        elif [[ -z "$FQ2" ]]; then
+            mapping_usage
+            echo -e "Error: Fastq file $FQ2 not found. (single-end reads not supported, use -p for interleaved FASTQ)\n"
+            exit 1
+        fi
+    fi
+
+    if [[ -z "$GENOME" ]] || [[ ! -f "$GENOME" ]]; then
+    mapping_usage
+    echo -e "Error: Reference file $GENOME not found.\n"
+    exit 1
+    fi
+
+    # Check for readgroup flag
+    if [[ -z $READ_GROUP ]]
+    then
+    READ_GROUP="@RG\tID:$OUTPUT\tSM:$OUTPUT\tLB:$OUTPUT\tPL:ILLUMINA"
+    fi
+    
+    if [[ "$INTERLEAVED" -eq 1 ]]; then
+        date
+        bwa mem -K 100000000 -Y -t $THREADS -R $READ_GROUP $GENOME $FQ | samblaster -a --addMateTags | samtools view -Sb - >${OUTPUT}.bam
+    else
+        date
+        bwa mem -K 100000000 -Y -t $THREADS -R $READ_GROUP $GENOME $FQ1 $FQ2 | samblaster -a --addMateTags | samtools view -Sb - >${OUTPUT}.bam
+    fi
+}
+
+function refine() {
+    function refine_usage() {
+	echo "
+usage:   SV_pipeline refine -m <4> -o <output> <input.bam>
+options:
+
+        -J STR   path to picard.jar [picard.jar]
+        -G STR   path to gatk3.jar [gatk3.jar]
+        -t INT   threads [4]
+        -m INT   mem (G) [40]
+        -o STR   prefix for output file
+        -O STR   path to the output directory
+        -V STR   genome version for human hg19 or hg38 [hg19]
+        -g STR   reference genome file [human_g1k_v37.fasta]
+        -M STR   temp directory [/tmp/SV.XXXXXXXXXXXX]
+        -A STR   knownSites [dbsnp138.vcf.gz]
+        -B STR   knownSites [Mills_and_1000G_gold_standard.indels.vcf.gz]
+        -C STR   knownSites/only used for hg38 [known_indels.vcf.gz]
+"
+    }
+    
+    # Check options passed in.
+    if test -z "$2"
+    then
+        refine_usage
+    exit 1
+    fi
+
+
+    
+    while getopts ":hg:J:G:t:O:M:o:V:A:B:C:m:" OPTION
+    do
+        case "${OPTION}" in
+            h)
+                refine_usage
+                exit 1
+                ;;
+            g)
+                GENOME="$OPTARG"
+                ;;
+            J)
+                Jpicard="$OPTARG"
+                ;;
+            G)
+                Jgatk3="$OPTARG"
+                ;;
+            t)
+                THREADS="$OPTARG"
+                ;;
+            O)
+                OUTPUT="$OPTARG"
+                ;;
+            M)
+                TMP_DIR="$OPTARG"
+                ;;
+            o)
+                name="$OPTARG"
+                ;;
+            V)
+                HG="$OPTARG"
+                ;;
+            A)
+                KSa="$OPTARG"
+                ;;
+            B)
+                KSb="$OPTARG"
+                ;;
+            C)
+                KSc="$OPTARG"
+                ;;
+            m)
+                mem="$OPTARG"
+                ;;
+        esac
+    done
+    
+    # set defaults
+    if [[ -z $HG ]]
+    then
+    HG="hg19"
+    fi
+    
+    if [[ -z $mem ]]
+    then
+    mem=40
+    fi
+    
+    if [ $HG == "hg19" ]; then
+        if [[ -z $GENOME ]]; then
+            GENOME="/scratch/cqs/shengq2/references/gatk/b37/bwa_index_0.7.17/human_g1k_v37.fasta"
+        fi
+    elif [ $HG == "hg38" ]; then
+        if [[ -z $GENOME ]]; then
+            GENOME="/scratch/cqs/baiy7/Tim_proj/Family_WGS/genome/hg38/Homo_sapiens_assembly38.fasta"
+        fi
+    else
+        echo "Unknown genome version！"
+        exit 1
+    fi
+    
+    if [ $HG == "hg19" ]; then
+        chr="-L 1 -L 2 -L 3 -L 4 -L 5 -L 6 -L 7 -L 8 -L 9 -L 10 -L 11 -L 12 -L 13 -L 14 -L 15 -L 16 -L 17 -L 18 -L 19 -L 20 -L 21 -L 22"
+        if [[ -z $KSa ]]
+        then
+        KSa="/scratch/cqs/shengq2/references/gatk/b37/dbsnp_150.b37.vcf.gz"
+        fi
+        if [[ -z $KSb ]]
+        then
+        KSb="/scratch/cqs/shengq2/references/gatk/b37/Mills_and_1000G_gold_standard.indels.b37.vcf"
+        fi
+        if [[ -z $KS ]]
+        then
+        KS="-knownSites $KSa -knownSites $KSb"
+        fi
+    elif [ $HG == "hg38" ]; then
+        chr="-L chr1 -L chr2 -L chr3 -L chr4 -L chr5 -L chr6 -L chr7 -L chr8 -L chr9 -L chr10 -L chr11 -L chr12 -L chr13 -L chr14 -L chr15 -L chr16 -L chr17 -L chr18 -L chr19 -L chr20 -L chr21 -L chr22"
+        if [[ -z $KSa ]]
+        then
+        KSa="/scratch/cqs/references/broad/hg38/v0/Homo_sapiens_assembly38.dbsnp138.vcf.gz"
+        fi
+        if [[ -z $KSb ]]
+        then
+        KSb="/scratch/cqs/references/broad/hg38/v0/Mills_and_1000G_gold_standard.indels.hg38.vcf.gz"
+        fi
+        if [[ -z $KSc ]]
+        then
+        KSc="/scratch/cqs/references/broad/hg38/v0/Homo_sapiens_assembly38.known_indels.vcf.gz"
+        fi
+        if [[ -z $KS ]]
+        then
+        KS="-knownSites $KSa -knownSites $KSb -knownSites $KSc"
+        fi
+    else
+        echo "Unknown genome version！"
+        exit 1
+    fi
+    
+    if [[ -z $THREADS ]]
+    then
+    THREADS=4
+    fi
+
+    if [[ -z $Jpicard ]]
+    then
+    Jpicard="/scratch/cqs/shengq2/local/bin/picard/picard.jar"
+    fi
+    if [[ -z $Jgatk3 ]]
+    then
+    Jgatk3="/scratch/cqs/softwares/gatk3.jar"
+    fi
+    
+    if [[ -z "$GENOME" ]] || [[ ! -f "$GENOME" ]]; then
+    refine_usage
+    echo -e "Error: Reference file $GENOME not found.\n"
+    exit 1
+    fi
+
+    if [[ -z $TMP_DIR ]]
+    then
+        TMP_DIR=`mktemp -d /tmp/SV.XXXXXXXXXXXX`
+    else
+        mkdir $TMP_DIR
+    fi
+    
+    if [[ -z $OUTPUT ]]
+    then
+    OUTPUT="./"
+    fi
+    
+    INPUT="${@:${OPTIND}:1}"
+    echo $INPUT
+    if [[ ! -f "$INPUT" ]]; then
+    refine_usage
+    echo -e "Error: the bam file $INPUT not found.\n"
+    exit 1
+    fi
+    
+
+date
+# ls $WORK_DIR/1_mapping_${HG}/${pattern}|xargs samtools merge -u -r $TMP_DIR/${name}.bam 
+sambamba sort --sort-picard -t $THREADS -m ${mem}G -o $TMP_DIR/${name}.sorted.queryName.bam $INPUT
+# rm $TMP_DIR/${name}.bam
+date
+java -Xmx$((${mem}-4))g -jar $Jpicard MarkDuplicates ASSUME_SORT_ORDER="queryname" COMPRESSION_LEVEL=0 I=$TMP_DIR/${name}.sorted.queryName.bam O=$TMP_DIR/${name}.mkDup.bam M=$TMP_DIR/${name}.mkDup.metrics.txt 
+rm $TMP_DIR/${name}.sorted.queryName.bam
+date
+sambamba sort -t $THREADS -m ${mem}G -o $TMP_DIR/${name}.mkDup.sorted.bam $TMP_DIR/${name}.mkDup.bam
+
+date
+java -Xmx$(((${mem}-4)/4))g -jar $Jgatk3 -T BaseRecalibrator -nct $THREADS -R $GENOME -I $TMP_DIR/${name}.mkDup.sorted.bam -o $TMP_DIR/${name}.table $KS --preserve_qscores_less_than 6 -dfrac .1 $chr
+
+date
+java -Xmx$(((${mem}-4)/4))g -jar $Jgatk3 -T PrintReads -nct $THREADS -I $TMP_DIR/${name}.mkDup.sorted.bam -o $OUTPUT/${name}.mkDup.sorted.recal.bam -BQSR $TMP_DIR/${name}.table -R $GENOME -preserveQ 6 -SQQ 10 -SQQ 20 -SQQ 30 --disable_indel_quals
+
+#rm -rf $TMP_DIR
+date
+
+}
+
+
+function call() {
+    function call_usage() {
+	echo "
+usage:   SV_pipeline call -s <path/to/smoove.simg> -g <reference.fa> -i <input.bam> -o <prefix for output> -O <output dir>
+options:
+        -s STR   paht to smoove simg
+        -t INT   threads [3]
+        -o STR   prefix for output file
+        -O STR   path to the output directory
+        -V STR   genome version for human hg19 or hg38 [hg19]
+        -g STR   reference genome file [human_g1k_v37.fasta]
+        -i STR   input bam file
+
+"
+    }
+    
+    # Check options passed in.
+    if test -z "$2"
+    then
+        call_usage
+    exit 1
+    fi
+
+    
+    while getopts ":hs:g:T:t:R:O:o:pV:M:i:" OPTION
+    do
+        case "${OPTION}" in
+            h)
+                call_usage
+                exit 1
+                ;;
+            s)
+                smoove="$OPTARG"
+                ;;
+            g)
+                GENOME="$OPTARG"
+                ;;
+            t)
+                THREADS="$OPTARG"
+                ;;
+            O)
+                OUTPUT="$OPTARG"
+                ;;
+            o)
+                name="$OPTARG"
+                ;;
+            V)
+                HG="$OPTARG"
+                ;;
+            i)
+                INPUT="$OPTARG"
+                ;;
+        esac
+    done
+    
+    if [[ -z $THREADS ]]
+    then
+    THREADS=3
+    fi
+    
+    if [[ -z $OUTPUT ]]
+    then
+    OUTPUT="./"
+    fi
+    
+    if [[ -z $name ]]
+    then
+     name ="test"
+    fi
+    
+    if [[ -z $HG ]]
+    then
+     HG ="hg19"
+    fi
+    
+    if [ $HG == "hg19" ]; then
+        if [[ -z $GENOME ]]; then
+            GENOME="/scratch/cqs/shengq2/references/gatk/b37/bwa_index_0.7.17/human_g1k_v37.fasta"
+        fi
+        excludeBed="/scratch/cqs/baiy7/tools/ceph18.b37.lumpy.exclude.2014-01-15.bed"
+    elif [ $HG == "hg38" ]; then
+        if [[ -z $GENOME ]]; then
+            GENOME="/scratch/cqs/baiy7/Tim_proj/Family_WGS/genome/hg38/Homo_sapiens_assembly38.fasta"
+        fi
+        excludeBed="/scratch/cqs/baiy7/tools/exclude.cnvnator_100bp.GRCh38.20170403.bed"
+    else
+        echo "Unknown genome version！"
+        exit 1
+    fi
+    
+    if [[ -z $smoove ]]
+    then
+    smoove="/scratch/cqs/baiy7/tools/smoove.simg"
+    fi
+    
+    if [[ -z "$INPUT" ]] || [[ ! -f "$INPUT" ]]; then
+    call_usage
+    echo -e "Error: the input bam file $INPUT could not be found.\n"
+    exit 1
+    fi
+    
+    if [[ -z "$GENOME" ]] || [[ ! -f "$GENOME" ]]; then
+    call_usage
+    echo -e "Error: the reference file $GENOME could not be found.\n"
+    exit 1
+    fi
+    
+    singularity exec $smoove smoove call --outdir $OUTPUT --exclude $excludeBed --name $name --fasta $GENOME -p $THREADS --excludechroms "hs37d5,~:,~^GL,~decoy,~alt" --genotype $INPUT
+}
+
+function merge() {
+    function merge_usage() {
+	echo "
+usage:   SV_pipeline merge -s <path/to/smoove.simg> -g <reference.fa> -o <prefix for output> -O <output dir> -i <path/to/your/*.genotyped.vcf.gz>
+options:
+        -s STR   paht to smoove simg
+        -o STR   prefix for output file
+        -O STR   path to the output directory
+        -V STR   genome version for human hg19 or hg38 [hg19]
+        -g STR   reference genome file [human_g1k_v37.fasta]
+        -i STR   input bam file
+"
+    }
+    
+    # Check options passed in.
+    if test -z "$2"
+    then
+        merge_usage
+    exit 1
+    fi
+
+    
+    while getopts ":hs:g:O:o:pV:i:" OPTION
+    do
+        case "${OPTION}" in
+            h)
+                merge_usage
+                exit 1
+                ;;
+            s)
+                smoove="$OPTARG"
+                ;;
+            g)
+                GENOME="$OPTARG"
+                ;;
+            O)
+                OUTPUT="$OPTARG"
+                ;;
+            o)
+                name="$OPTARG"
+                ;;
+            V)
+                HG="$OPTARG"
+                ;;
+            i)
+                INPUT="$OPTARG"
+                ;;
+        esac
+    done
+    
+    if [[ -z $OUTPUT ]]
+    then
+    OUTPUT="./"
+    fi
+    
+    if [[ -z $HG ]]
+    then
+        HG="hg19"
+    fi
+    
+    if [[ -z $INPUT ]]
+    then
+    merge_usage
+    echo -e "Error: no genotyped file provided.\n"
+    exit 1
+    fi
+    
+    if [ $HG == "hg19" ]; then
+        if [[ -z $GENOME ]]; then
+            GENOME="/scratch/cqs/shengq2/references/gatk/b37/bwa_index_0.7.17/human_g1k_v37.fasta"
+        fi
+    elif [ $HG == "hg38" ]; then
+        if [[ -z $GENOME ]]; then
+            GENOME="/scratch/cqs/baiy7/Tim_proj/Family_WGS/genome/hg38/Homo_sapiens_assembly38.fasta"
+        fi
+    else
+        echo "Unknown genome version！"
+        exit 1
+    fi
+    
+    if [[ -z $smoove ]]
+    then
+    smoove="/scratch/cqs/baiy7/tools/smoove.simg"
+    fi
+    
+    if [[ -z "$GENOME" ]] || [[ ! -f "$GENOME" ]]; then
+    merge_usage
+    echo -e "Error: the reference file $GENOME could not be found.\n"
+    exit 1
+    fi
+    
+    singularity exec $smoove smoove merge --outdir $OUTPUT --name $name --fasta $GENOME $INPUT
+}
+
+
+function genotype() {
+    function genotype_usage() {
+	echo "
+usage:   SV_pipeline genotype -v <merged vcf file> -s <path/to/smoove.simg> -g <reference.fa> -i <input.bam> -o <prefix for output> -O <output dir>
+options:
+        -s STR   paht to smoove simg
+        -t INT   threads [4]
+        -o STR   prefix for output file
+        -O STR   path to the output directory
+        -V STR   genome version for human hg19 or hg38 [hg19]
+        -g STR   reference genome file [human_g1k_v37.fasta]
+        -i STR   input bam file
+        -v STR   input merged vcf file
+"
+    }
+    
+    # Check options passed in.
+    if test -z "$2"
+    then
+        genotype_usage
+    exit 1
+    fi
+
+    
+    while getopts ":hs:g:t:O:o:V:i:v:" OPTION
+    do
+        case "${OPTION}" in
+            h)
+                call_usage
+                exit 1
+                ;;
+            s)
+                smoove="$OPTARG"
+                ;;
+            g)
+                GENOME="$OPTARG"
+                ;;
+            t)
+                THREADS="$OPTARG"
+                ;;
+            O)
+                OUTPUT="$OPTARG"
+                ;;
+            o)
+                name="$OPTARG"
+                ;;
+            V)
+                HG="$OPTARG"
+                ;;
+            i)
+                INPUT="$OPTARG"
+                ;;
+            v)
+                vcf="$OPTARG"
+                ;;
+        esac
+    done
+    
+    if [[ -z $THREADS ]]
+    then
+    THREADS=3
+    fi
+    
+    if [[ -z $OUTPUT ]]
+    then
+    OUTPUT="./"
+    fi
+    
+    if [ $HG == "hg19" ]; then
+        if [[ -z $GENOME ]]; then
+            GENOME="/scratch/cqs/shengq2/references/gatk/b37/bwa_index_0.7.17/human_g1k_v37.fasta"
+        fi
+    elif [ $HG == "hg38" ]; then
+        if [[ -z $GENOME ]]; then
+            GENOME="/scratch/cqs/baiy7/Tim_proj/Family_WGS/genome/hg38/Homo_sapiens_assembly38.fasta"
+        fi
+    else
+        echo "Unknown genome version！"
+        exit 1
+    fi
+    
+    if [[ -z $smoove ]]
+    then
+    smoove="/scratch/cqs/baiy7/tools/smoove.simg"
+    fi
+    
+    if [[ -z "$INPUT" ]] || [[ ! -f "$INPUT" ]]; then
+    genotype_usage
+    echo -e "Error: the input bam file $INPUT could not be found.\n"
+    exit 1
+    fi
+    
+    if [[ -z "$vcf" ]] || [[ ! -f "$vcf" ]]; then
+    genotype_usage
+    echo -e "Error: the merged vcf file $vcf could not be found.\n"
+    exit 1
+    fi
+    
+    if [[ -z "$GENOME" ]] || [[ ! -f "$GENOME" ]]; then
+    genotype_usage
+    echo -e "Error: the reference file $GENOME could not be found.\n"
+    exit 1
+    fi
+    
+    singularity exec $smoove smoove genotype --outdir $OUTPUT --name $name --fasta $GENOME -d -x -p $THREADS --vcf $vcf $INPUT
+}
+
+
+function combine() {
+    function combine_usage() {
+	echo "
+usage:   SV_pipeline combine -s <path/to/smoove.simg> -o <prefix for output> -O <output dir> -i <path/to/your/*.genotyped.vcf.gz>
+options:
+        -s STR   paht to smoove simg
+        -o STR   prefix for output file
+        -O STR   path to the output directory
+        -i STR   input bam file
+"
+    }
+    
+    # Check options passed in.
+    if test -z "$2"
+    then
+        combine_usage
+    exit 1
+    fi
+
+    
+    while getopts ":hs:O:o:i:" OPTION
+    do
+        case "${OPTION}" in
+            h)
+                combine_usage
+                exit 1
+                ;;
+            s)
+                smoove="$OPTARG"
+                ;;
+            O)
+                OUTPUT="$OPTARG"
+                ;;
+            o)
+                name="$OPTARG"
+                ;;
+            i)
+                INPUT="$OPTARG"
+                ;;
+        esac
+    done
+    
+    if [[ -z $OUTPUT ]]
+    then
+    OUTPUT="./"
+    fi
+    
+    if [[ -z $INPUT ]]
+    then
+    combine_usage
+    echo -e "Error: no file provided.\n"
+    exit 1
+    fi
+    
+
+    
+    if [[ -z $smoove ]]
+    then
+    smoove="/scratch/cqs/baiy7/tools/smoove.simg"
+    fi
+    
+    singularity exec $smoove smoove paste --outdir $OUTPUT --name $name $INPUT
+}
+
+
+function annotate() {
+    function annotate_usage() {
+	echo "
+usage:   SV_pipeline annotate -s <path/to/smoove.simg> -O <output dir> -o <smoove.square.anno.vcf.gz> -i <path/to/your/smoove.sqare.vcf.gz> -g <path/to/your/genes_annotaion.gff3.gz>
+options:
+        -s STR   paht to smoove simg
+        -o STR   prefix for output file
+        -O STR   path to the output directory
+        -V STR   genome version for human hg19 or hg38 [hg19]
+        -g STR   gff file for annotation
+        -i STR   input bam file
+"
+    }
+    
+    # Check options passed in.
+    if test -z "$2"
+    then
+        annotate_usage
+    exit 1
+    fi
+
+    
+    while getopts ":hs:O:o:g:i:" OPTION
+    do
+        case "${OPTION}" in
+            h)
+                annotate_usage
+                exit 1
+                ;;
+            s)
+                smoove="$OPTARG"
+                ;;
+            O)
+                OUTPUT="$OPTARG"
+                ;;
+            o)
+                name="$OPTARG"
+                ;;
+            g)
+                GFF="$OPTARG"
+                ;;
+            i)
+                INPUT="$OPTARG"
+                ;;
+        esac
+    done
+    
+    if [[ -z $OUTPUT ]]
+    then
+    OUTPUT="./"
+    fi
+    
+    if [[ -z $INPUT ]]
+    then
+    annotate_usage
+    echo -e "Error: no input file provided.\n"
+    exit 1
+    fi
+    
+    if [[ -z $GFF ]]
+    then
+    annotate_usage
+    echo -e "Error: no gff file provided.\n"
+    exit 1
+    fi
+    
+    if [[ -z $smoove ]]
+    then
+    smoove="/scratch/cqs/baiy7/tools/smoove.simg"
+    fi
+    
+    singularity exec $smoove smoove annotation --gff $GFF $INPUT | bgzip -c >$OUTPUT/$name
+}
+
+if test -z "$1"
+then
+    usage
+    exit 1
+fi
+
+
+while getopts ":h" OPTION
+do
+    case "${OPTION}" in
+        h)
+            usage
+            exit 1
+            ;;
+        ?)
+            usage
+            exit
+            ;;
+    esac
+done
+
+case "$1" in 
+    'mapping')
+    mapping "${@:2}"
+    ;;
+    'refine')
+    refine "${@:2}"
+    ;;
+    'call')
+    call "${@:2}"
+    ;;
+    'merge')
+    merge "${@:2}"
+    ;;
+    'genotype')
+    genotype "${@:2}"
+    ;;
+    'combine')
+    combine "${@:2}"
+    ;;
+    'annotate')
+    annotate "${@:2}"
+    ;;
+    *)
+    usage
+    echo -e "Error: command \"$1\" not recognized\n"
+    exit 1
+esac
+
+## done
