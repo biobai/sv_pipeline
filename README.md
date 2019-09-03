@@ -1,10 +1,11 @@
 # SV_pipeline
 a framework for DNA seq mapping and call structural variant for WGS data.
 
-Most tools are already satisfied at ACCRE(CQS accoutn at VUMC),such as smoove(https://github.com/brentp/smoove).
-It also requires:
-    sambamba(https://github.com/biod/sambamba)
+Most tools are already satisfied at ACCRE(CQS accoutn at VUMC), such as:
 
+* smoove(https://github.com/brentp/smoove).
+* sambamba(https://github.com/biod/sambamba)
+    
 ## Quick start
     ```
     Program: sv_pipeline
@@ -28,25 +29,33 @@ chmod a+x bin/sv_pipeline
 ## 2. RUN
 
 mapping test fastq file to hg19(default)/hg38 genome
+
     ```
     sv_pipeline mapping -o test ./test.R1.fq.gz ./test.R2.fq.gz
     ```
     
+    
 refine the bam file
+
     ```
     sv_pipeline refine -o test -O ./ -V hg38 -i test.bam
     ```
+    
 smoove call
+
     ```
     sv_pipeline call -i ./test.mkDup.sorted.recal.bam -o test -V hg38
     ```
     
+    
 smoove merge
+
     ```
     sv_pipeline merge -o test -O ./ -i *.genotyped.vcf.gz -V hg38
     ```
-    
+
 smoove genotype
+
     ```
     sv_pipeline genotype -v test.sites.vcf.gz -i ../2_bamMerge_hg38/result/SL345196/SL345196.mkDup.sorted.recal.bam -o SL345196 -O ./ -V hg38
     ```
