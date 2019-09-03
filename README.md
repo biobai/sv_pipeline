@@ -1,7 +1,7 @@
 # SV_pipeline
 a framework for DNA seq mapping and call structural variant for WGS data.
 
-Most tools are already satisfied at ACCRE(CQS accoutn at VUMC), such as:
+Most tools are already satisfied at ACCRE(under CQS group at VUMC), such as:
 
 * smoove(https://github.com/brentp/smoove).
 * sambamba(https://github.com/biod/sambamba)
