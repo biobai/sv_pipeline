@@ -145,6 +145,24 @@ options:
     READ_GROUP="@RG\tID:$OUTPUT\tSM:$OUTPUT\tLB:$OUTPUT\tPL:ILLUMINA"
     fi
     
+    if ! [ -x "bwa --version" ]
+    then
+        echo 'Error: bwa is not installed.' >&2
+        exit 1
+    fi
+    
+    if ! [ -x "samblaster --version" ]
+    then
+        echo 'Error: samblaster is not installed.' >&2
+        exit 1
+    fi
+    
+    if ! [ -x "samtools --version" ]
+    then
+        echo 'Error: samtools is not installed.' >&2
+        exit 1
+    fi
+    
     if [[ "$INTERLEAVED" -eq 1 ]]; then
         date
         bwa mem -K 100000000 -Y -t $THREADS -R $READ_GROUP $GENOME $FQ | samblaster -a --addMateTags | samtools view -Sb - >${OUTPUT}.bam
@@ -331,7 +349,12 @@ options:
     exit 1
     fi
     
-
+    if ! [ -x "sambamba --version" ]
+    then
+        echo 'Error: sambamba is not installed.' >&2
+        exit 1
+    fi
+    
 date
 # ls $WORK_DIR/1_mapping_${HG}/${pattern}|xargs samtools merge -u -r $TMP_DIR/${name}.bam 
 sambamba sort --sort-picard -t $THREADS -m ${mem}G -o $TMP_DIR/${name}.sorted.queryName.bam $INPUT
@@ -376,7 +399,6 @@ options:
         call_usage
     exit 1
     fi
-
     
     while getopts ":hs:g:T:t:R:O:o:pV:M:i:" OPTION
     do
@@ -408,7 +430,7 @@ options:
                 ;;
         esac
     done
-    
+
     if [[ -z $THREADS ]]
     then
     THREADS=3
@@ -459,6 +481,12 @@ options:
     call_usage
     echo -e "Error: the reference file $GENOME could not be found.\n"
     exit 1
+    fi
+    
+    if ! [ -x "singularity --version" ]
+    then
+        echo 'Error: singularity is not installed.' >&2
+        exit 1
     fi
     
     singularity exec $smoove smoove call --outdir $OUTPUT --exclude $excludeBed --name $name --fasta $GENOME -p $THREADS --excludechroms "hs37d5,~:,~^GL,~decoy,~alt" --genotype $INPUT

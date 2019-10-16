@@ -1,11 +1,12 @@
 # SV_pipeline
 a framework for DNA seq mapping and call structural variant for WGS data.
 
-Most tools are already satisfied at ACCRE(under CQS group at VUMC), such as:
+Recently WGS processing standards were proposed by Regier A. et al. 2017 Nature Comm. Here this pipeline includes these guiding principles for future integrateion of different WGS bam file from different source of public database, likes TOPMed.
+SV call was made by [smoove](https://github.com/brentp/smoove)
+Most tools are already satisfied at ACCRE(under CQS group at VUMC), except thess two need to be installed
+* [sambamba](https://github.com/biod/sambamba)
+* [snakemake](https://snakemake.readthedocs.io/en/stable/getting_started/installation.html)
 
-* smoove(https://github.com/brentp/smoove).
-* sambamba(https://github.com/biod/sambamba)
-    
 ## Quick start
     ```
     Program: sv_pipeline
@@ -59,3 +60,5 @@ smoove genotype
     ```
     sv_pipeline genotype -v test.sites.vcf.gz -i ../2_bamMerge_hg38/result/SL345196/SL345196.mkDup.sorted.recal.bam -o SL345196 -O ./ -V hg38
     ```
+
+## 3. run it on snakemake version
