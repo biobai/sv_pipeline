@@ -61,4 +61,4 @@ smoove genotype
     sv_pipeline genotype -v test.sites.vcf.gz -i ../2_bamMerge_hg38/result/SL345196/SL345196.mkDup.sorted.recal.bam -o SL345196 -O ./ -V hg38
     ```
 
-## 3. run it on snakemake version
+## 3. run it on snakemake version (in future)

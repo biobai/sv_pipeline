@@ -1,0 +1,4 @@
+samples_file: /data1/baiy7/Tim_proj/Genentech_500/snakemake_dir/samples.tsv
+genome_file: /scratch/cqs/shengq2/references/gatk/b37/bwa_index_0.7.17/human_g1k_v37.fasta
+output_dir: /scratch/cqs/baiy7/Tim_proj/Family_WGS/test 
+

@@ -1,0 +1,29 @@
+import pandas, os, sys
+
+configfile: "config.yaml"
+#print (config["SAMPLES"])
+#samples=["SAM24312116","SAM24312117","SAM24312118"]
+
+#def wildscardsToReadmap(wildcards):
+#    return samples.loc[wildcards.sample_id].read_map
+
+#def getPrefix(path, num_suffixes = 1):
+#    return ".".join(path.split(".")[:-num_suffixes])
+genome = config["genome_file"]
+samples = pandas.read_table(config["samples_file"]).set_index("sample_id", drop=False)
+print(samples)
+rule all:
+    input:
+        expand("../mappedBam/2116_2159/{sample_id}.bam",sample_id=samples.sample_id)
+
+	
+rule bwa_remap:
+    input:
+        "../data/2116_2159/{sample_id}.bam"
+    output:
+        "../mappedBam/2116_2159/{sample_id}.bam"
+    threads: 8
+    params:
+	read_group=expand("{patient}",patient=samples.patient_id)
+    shell:
+        "java -jar /scratch/cqs/baiy7/tools/bazam/build/libs/bazam.jar -bam {input} | bwa mem -K 100000000 -Y -t {threads} -R {params.read_group} {genome} - | samblaster -a --addMateTags | samtools view -Sb - >{OUTPUT}  "

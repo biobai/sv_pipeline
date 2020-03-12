@@ -1,0 +1,2 @@
+SyntaxError in line 27 of /data1/baiy7/Tim_proj/Genentech_500/snakemake_dir/snakefile:
+Unexpected keyword read_group in rule definition (snakefile, line 27)
